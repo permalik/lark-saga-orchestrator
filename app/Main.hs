@@ -1,61 +1,55 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-import Control.Exception (IOException, catch)
-import qualified Data.Aeson as Aeson
-import qualified Data.ByteString.Lazy.Char8 as BL
-import GHC.Generics (Generic)
-import Network.Socket
-import Network.Socket.ByteString (recv, sendAll)
-import System.IO (hFlush, stdout)
+module Main where
 
-data Message = Message
+import Data.Aeson
+import qualified Data.ByteString.Lazy.Char8 as BL
+import Data.Text (Text)
+import GHC.Generics (Generic)
+import Network.HTTP.Simple
+import Network.HTTP.Types (methodPost, status200, status400)
+import qualified Network.Wai as W
+import Network.Wai.Handler.Warp (run)
+
+data Payload = Payload
     { msgId :: Int
-    , content :: String
+    , content :: Text
     }
     deriving (Show, Generic)
 
-instance Aeson.ToJSON Message where
-    toJSON (Message i c) =
-        Aeson.object ["id" Aeson..= i, "content" Aeson..= c]
+instance FromJSON Payload
+instance ToJSON Payload
 
-instance Aeson.FromJSON Message where
-    parseJSON = Aeson.withObject "Message" $ \v ->
-        Message
-            <$> v Aeson..: "id"
-            <*> v Aeson..: "content"
+app :: W.Application
+app req respond
+    | W.requestMethod req == methodPost && W.rawPathInfo req == "/" = do
+        body <- W.strictRequestBody req
+        case decode body :: Maybe Payload of
+            Just payload -> do
+                putStrLn "Received and decoded JSON:"
+                print payload
+
+                let newJson = encode payload
+                _ <- postToOtherService newJson
+                putStrLn "Forwarded to external service."
+
+                respond $ W.responseLBS status200 [("Content-Type", "application/json")] newJson
+            Nothing -> do
+                putStrLn "Failed to decode JSON."
+                respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Invalid JSON"
+    | otherwise = respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Bad Request"
+
+postToOtherService :: BL.ByteString -> IO (Response BL.ByteString)
+postToOtherService json = do
+    initReq <- parseRequest "POST http://localhost:8888/receive"
+    let req =
+            setRequestBodyLBS json $
+                setRequestHeader "Content-Type" ["application/json"] $
+                    initReq
+    httpLBS req
 
 main :: IO ()
 main = do
-    sock <- socket AF_UNIX Stream 0
-    connect sock (SockAddrUnix "/tmp/lark-saga.sock")
-
-    let loop msgIdCounter = do
-            putStr "Enter message content (or 'quit' to exit): "
-            hFlush stdout
-            input <- getLine
-            if input == "quit"
-                then do
-                    putStrLn "Exiting."
-                    close sock
-                else do
-                    let outgoing = Message msgIdCounter input
-                        json = Aeson.encode outgoing
-                    catch
-                        ( do
-                            sendAll sock (BL.toStrict json)
-                            response <- recv sock 4096
-                            case Aeson.decode (BL.fromStrict response) of
-                                Just (Message i c) -> do
-                                    putStrLn $ "Got reply with id: " ++ show i ++ ", content: " ++ c
-                                    loop (msgIdCounter + 1)
-                                Nothing -> do
-                                    putStrLn "Failed to parse JSON response."
-                                    close sock
-                        )
-                        ( \e -> do
-                            putStrLn $ "Socket error: " ++ show (e :: IOException)
-                            close sock
-                        )
-
-    loop 1
+    putStrLn "Running server on http://localhost:9999"
+    run 9999 app

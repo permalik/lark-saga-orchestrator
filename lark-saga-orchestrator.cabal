@@ -76,6 +76,7 @@ executable lark-saga-orchestrator
         , http-conduit
         , http-types
         , text
+        , time
         , wai
         , warp
 

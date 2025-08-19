@@ -14,6 +14,8 @@ import Network.HTTP.Simple
 import Network.HTTP.Types (methodPost, status200, status400)
 import qualified Network.Wai as W
 import Network.Wai.Handler.Warp (run)
+import System.Directory (createDirectoryIfMissing)
+import System.IO (BufferMode (..), Handle, IOMode (AppendMode), hFlush, hSetBuffering, withFile)
 
 data Payload = Payload
     { msgId :: Int
@@ -32,29 +34,30 @@ data LogEntry = LogEntry
 
 instance ToJSON LogEntry
 
-logMsg :: Text -> IO ()
-logMsg msg = do
+logMsg :: Handle -> Text -> IO ()
+logMsg h msg = do
     now <- getCurrentTime
     let ts = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" now
         entry = LogEntry ts msg
-    BL.putStrLn $ encode entry
+        encoded = encode entry
+    BL.hPutStrLn h encoded
 
-app :: W.Application
-app req respond
+app :: Handle -> W.Application
+app h req respond
     | W.requestMethod req == methodPost && W.rawPathInfo req == "/" = do
         body <- W.strictRequestBody req
         case decode body :: Maybe Payload of
             Just payload -> do
-                logMsg "Received and decoded JSON:"
-                logMsg (T.pack (show payload))
+                logMsg h "Received and decoded JSON:"
+                logMsg h (T.pack (show payload))
 
                 let newJson = encode payload
                 _ <- postToOtherService newJson
-                logMsg "Forwarded to external service."
+                logMsg h "Forwarded to external service."
 
                 respond $ W.responseLBS status200 [("Content-Type", "application/json")] newJson
             Nothing -> do
-                logMsg "Failed to decode JSON."
+                logMsg h "Failed to decode JSON."
                 respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Invalid JSON"
     | otherwise = respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Bad Request"
 
@@ -69,5 +72,10 @@ postToOtherService json = do
 
 main :: IO ()
 main = do
-    logMsg "Running server on http://localhost:9999"
-    run 9999 app
+    createDirectoryIfMissing True "logs"
+
+    withFile "logs/out.log" AppendMode $ \h -> do
+        hSetBuffering h LineBuffering
+        logMsg h "Running server on http://localhost:9999"
+        hFlush h
+        run 9999 (app h)

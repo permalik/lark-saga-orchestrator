@@ -73,6 +73,7 @@ executable lark-saga-orchestrator
         , aeson
         , base          ^>=4.18.3.0
         , bytestring
+        , directory
         , http-conduit
         , http-types
         , text

@@ -9,6 +9,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Format (defaultTimeLocale, formatTime)
+import Data.Time.Zones
 import GHC.Generics (Generic)
 import Network.HTTP.Simple
 import Network.HTTP.Types (methodPost, status200, status400)
@@ -36,8 +37,10 @@ instance ToJSON LogEntry
 
 logMsg :: Handle -> Text -> IO ()
 logMsg h msg = do
-    now <- getCurrentTime
-    let ts = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" now
+    nowUtc <- getCurrentTime
+    tz <- loadTZFromDB "America/Chicago"
+    let chicagoTime = utcToLocalTimeTZ tz nowUtc
+        ts = T.pack $ formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%S%QZ" chicagoTime
         entry = LogEntry ts msg
         encoded = encode entry
     BL.hPutStrLn h encoded

@@ -1,5 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# HLINT ignore "Use newtype instead of data" #-}
 
 module Main where
 
@@ -35,6 +37,12 @@ data LogEntry = LogEntry
 
 instance ToJSON LogEntry
 
+data ErrorResponse = ErrorResponse
+    { error :: Text
+    } deriving (Show, Generic)
+
+instance ToJSON ErrorResponse
+
 logMsg :: Handle -> Text -> IO ()
 logMsg h msg = do
     nowUtc <- getCurrentTime
@@ -59,18 +67,21 @@ app h req respond
                 logMsg h "Forwarded to external service."
 
                 respond $ W.responseLBS status200 [("Content-Type", "application/json")] newJson
+
             Nothing -> do
                 logMsg h "Failed to decode JSON."
-                respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Invalid JSON"
-    | otherwise = respond $ W.responseLBS status400 [("Content-Type", "text/plain")] "Bad Request"
+                let errJson = encode $ ErrorResponse "Invalid JSON"
+                respond $ W.responseLBS status400 [("Content-Type", "application/json")] errJson
+    | otherwise = do
+        logMsg h "bad request path or method."
+        let errJson = encode $ ErrorResponse "Bad Request"
+        respond $ W.responseLBS status400 [("Content-Type", "application/json")] errJson
 
 postToOtherService :: BL.ByteString -> IO (Response BL.ByteString)
 postToOtherService json = do
     initReq <- parseRequest "POST http://localhost:8888/receive"
-    let req =
-            setRequestBodyLBS json $
-                setRequestHeader "Content-Type" ["application/json"] $
-                    initReq
+    let req = setRequestBodyLBS json
+            $ setRequestHeader "Content-Type" ["application/json"] initReq
     httpLBS req
 
 main :: IO ()

@@ -22,4 +22,6 @@ cabal.project.local~
 .HTF/
 .ghc.environment.*
 
-**/logs
+.idea/
+**/*.DS_Store
+**/*.log
